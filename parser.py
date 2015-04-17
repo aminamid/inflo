@@ -1,114 +1,75 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import sys
-
 from signal import signal, SIGPIPE, SIG_DFL
 signal(SIGPIPE,SIG_DFL)
 
 import sys
-
-from logging import getLogger, StreamHandler, Formatter
-
-def setM(obj, l):
-    for m in l:
-        getattr(obj, m[0])(*m[1])
-    return obj
-
-def loginit(logname, format="%(message)s", stream=sys.stderr, level=15, datefmt="%Y/%m/%dT%H:%M:%S" ):
-    return setM(getLogger(logname), [
-        ("setLevel", [level]),
-        ("addHandler", [setM(StreamHandler(stream),[("setFormatter", [Formatter(fmt=format,datefmt=datefmt)])])])
-      ])
+import common
 
 loggercfg = {
-  "format": "%(asctime)s.%(msecs).03d %(process)d %(thread)x %(levelname).4s;%(module)s(%(lineno)d/%(funcName)s) %(message)s",
+  #  "format": "%(asctime)s.%(msecs).03d %(process)d %(thread)x %(levelname).4s;%(module)s(%(lineno)d/%(funcName)s) %(message)s",
   "level": 10,
 }
 logstdcfg = {
-  "level": 10,
   "stream": sys.stdout,
+  "level": 10,
 }
 
-logger = loginit(__name__,**loggercfg)
-logstd = loginit("std",**logstdcfg)
-
-import functools
-def traclog( f ):
-    @functools.wraps(f)
-    def _f(*args, **kwargs):
-        logger.debug("ENTER:{0} {1}".format( f.__name__, kwargs if kwargs else args))
-        result = f(*args, **kwargs)
-        logger.debug("RETRN:{0} {1}".format( f.__name__, result))
-        return result
-    return _f
+logger = common.loginit(__name__,**loggercfg)
+logstd = common.loginit("std",**logstdcfg)
 
 # Classes generate lines, parse and merge, output to collector| file
 # TODO:
 #   vmstat,iostat,ps,top,pidstat,mpstat,netstat,netstat -s,lsof,df,du,  application log,stat,trace,  java gc
 import multiprocessing
 import subprocess
+import datetime
 import time
 import itertools
 import re
 import select
+import json
 
-from regex_dict import regex_dict
+import pars_vmstat
+import pars_sar
+#common.loginit("pars_vmstat",**loggercfg)
+#common.loginit("pars_sar",**loggercfg)
 
-def concat( lsts ):
-    return list(itertools.chain(*lsts))
 
 CMDS = {
-        "v": "vmstat {interval} | awk '{{ print strftime(\"%Y-%m-%dT%H:%M:%S\"), $0; fflush() }}'",
-        "i": "iostat -tNxkyz -p ALL {interval}",
-        "s": "netstat -s {interval}",
+        "v": "LANG=C vmstat {interval} | awk '{{ print strftime(\"%Y-%m-%dT%H:%M:%S\"), $0; fflush() }}'",
+        "i": "LANG=C iostat -tNxkyz -p ALL {interval}",
+        "n": "LANG=C netstat -s {interval}",
+        "s": "LANG=C sar -A {interval}",
         }
 
-@traclog
-def parse_vmstat(backlog, pipe):
-    names="time r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st".split()
-    for line in backlog:
-        if not line or re.search('p',line): continue
-        logstd.info( dict(zip(names,line.strip().split())))
-    while True:
-        line = pipe.stdout.readline()
-        logger.info("getline=[{0}]".format(line.replace("\n","\\n").replace("\t","\\t")))
-        if not line or re.search('p',line): continue
-        logstd.info( dict(zip(names,line.strip().split())))
-
-vmdict=regex_dict({
-    #procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
-    # r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
-    #  2  0 2142864 178948 141932 3479568    0    0     1    17    2    3  8  4 88  0  0
-    "^.* +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+\s*$": (parse_vmstat,1),
-    "^.* +r +b +swpd +free +buff +cache +si +so +bi +bo +in +cs +us +sy +id +wa +st\s*$": (parse_vmstat,2),
-    "^.*procs -+memory-+ -+swap-+ -+io-+ -+system-+ -+cpu-+\s*$": (parse_vmstat,None),
-})
-
-
-@traclog
 def guess(rdict,line):
-    return rdict[line]
+    rslt=rdict[line]
+    return rslt if rslt else None
 
-@traclog
-def worker(cmd, rdict, logfile):
+@common.traclog(logger)
+def worker_loop(cmd, rdict, logfile):
     parser=None
     backlog=[]
     c=subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
     while not parser:
         line = c.stdout.readline()
         if not line:
-            if c.poll(): return
+            if not c.poll(): return
             time.sleep(1)
         logger.info("getline=[{0}]".format(line.replace("\n","\\n").replace("\t","\\t")))
         backlog.append(line)
         parser=guess(rdict,line)
-    parser[0](backlog, c)
+    logger.debug("{0}".format(parser))
+    gendat = parser[0][0](common.regex_dict(sys.modules[parser[0][1]].rdict),backlog, c)
+    for dat in gendat:
+        logstd.info("{0}".format(json.dumps(dat)))
 
-@traclog
-def care_procs(procs):
+def run(procs):
     for p in procs: p.start()
     while True:
+        time.sleep(1)
         deadps = [i for (i,p) in enumerate(procs) if not p.is_alive()]
         for i in deadps:
             procs[i].join()
@@ -116,15 +77,17 @@ def care_procs(procs):
         if not procs: break
     return 
 
+
 def main(opts):
     if opts['verbose']: logger.info("{0}".format(opts))
     procs = []
-    rdict = regex_dict(dict(concat([ d.items() for d in [vmdict,] ])))
+    rdict = common.regex_dict(dict(common.concat([ d.items() for d in [pars_vmstat.rdict,pars_sar.rdict,] ])))
     if not opts["args"]:
         sys.exit()
+    ts=common.genlogtime()
     for arg in opts["args"]:
-        procs.append(multiprocessing.Process(target=worker,args=(CMDS[arg].format(interval=opts["interval"]) if arg in CMDS else arg, rdict, "_".join(arg))))
-    return care_procs(procs)
+        procs.append(multiprocessing.Process(target=worker_loop,args=(CMDS[arg].format(interval=opts["interval"]) if arg in CMDS else arg, rdict, "{0}.{1}".format(arg,ts).replace(" ","_"))))
+    run(procs)
 
 def parsed_opts():
     import optparse
