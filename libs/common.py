@@ -6,19 +6,11 @@ import datetime
 import itertools
 import re
 
-def concat( lsts ):
-        return list(itertools.chain(*lsts))
+def concat( ll ):
+        return list(itertools.chain(*ll))
 
-def gentime():
+def nowstr(fmt="%Y-%m-%dT%H:%M:%S"):
         return datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-
-def genlogtime():
-        return datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-
-def setM(obj, l):
-    for m in l:
-        getattr(obj, m[0])(*m[1])
-    return obj
 
 # http://taichino.com/programming/1538
 
@@ -45,22 +37,32 @@ class regex_dict(dict):
     super(self.__class__, self).__setitem__(item_key, item_val)
 
 
+##  logging
+def change_state(obj, method_arglist_tpls):
+    for m_as in method_arglist_tpls:
+        getattr(obj, m_as[0])(*m_as[1])
+    return obj
+
 from logging import getLogger, StreamHandler, Formatter
 def loginit(logname, format="%(message)s", stream=sys.stderr, level=15, datefmt="%Y/%m/%dT%H:%M:%S" ):
-    return setM(getLogger(logname), [
+    return change_state(getLogger(logname), [
         ("setLevel", [level]),
-        ("addHandler", [setM(StreamHandler(stream),[("setFormatter", [Formatter(fmt=format,datefmt=datefmt)])])])
+        ("addHandler", [change_state(
+            StreamHandler(stream),[("setFormatter", [Formatter(fmt=format,datefmt=datefmt)])]
+        )])
       ])
+
+## logging functions
 
 import functools
 def traclog(logger):
     def recvfunc(f):
         @functools.wraps(f)
-        def _f(*args, **kwargs):
-            logger.debug("ENTER:{0} {1}".format( f.__name__, kwargs if kwargs else args))
+        def trac(*args, **kwargs):
+            logger.log(5,"ENTER:{0} {1}".format( f.__name__, kwargs if kwargs else args))
             result = f(*args, **kwargs)
-            logger.debug("RETRN:{0} {1}".format( f.__name__, result))
+            logger.log(5,"RETRN:{0} {1}".format( f.__name__, result))
             return result
-        return _f
+        return trac
     return recvfunc
 
