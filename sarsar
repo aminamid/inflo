@@ -1,0 +1,171 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from logging import getLogger
+logger=getLogger(__name__)
+import time
+import datetime
+import os
+import sys
+sys.path.append("{0}/libs".format(os.path.dirname(os.path.abspath(__file__))))
+
+import common
+
+TAGS=[
+        "CPU",
+        "TTY",
+        "DEV",
+        "IFACE",
+        "INTR",
+        "SEQ",
+        ]
+
+#@common.traclog(logger)
+def rtn(time, kvs, prefix):
+    # return [prefix, ts, tag_dict, val_dict]
+    return [prefix, time, [(k,v) for (k,v) in kvs if k in TAGS], [(k,v) for (k,v) in kvs if k not in TAGS]] 
+         
+
+
+#@common.traclog(logger)
+def sar_datetime(start_date):
+    """
+    >>> import sar_datetime
+    >>> gen=sar_datetime.sar_datetime("06/02/2015")
+    >>> next(gen)
+    '2015-06-02 00:00:00'
+    >>> gen.send("12:00:00")
+    '2015-06-02 12:00:00'
+    >>> gen.send("13:00:00")
+    '2015-06-02 13:00:00'
+    >>> gen.send("00:00:00")
+    '2015-06-03 00:00:00'
+    """
+    current_date=None
+    for fmt in ["%m/%d/%y", "%m/%d/%Y"]:
+        try:
+            current_date=datetime.datetime.strptime(start_date, fmt)
+            break
+        except ValueError as e:
+            logger.debug("{0}".format(e))
+            pass
+
+    current_time=datetime.datetime.strptime("00:00:00", "%H:%M:%S")
+    while True:
+        timestr = ( yield "{0}T{1}".format(current_date.strftime("%Y-%m-%d"),current_time.strftime("%H:%M:%S")) )
+        if not timestr:
+            continue
+        raw_time = datetime.datetime.strptime(timestr, "%H:%M:%S")
+        if raw_time < current_time:
+            current_date+=datetime.timedelta(days=1)
+        current_time = raw_time
+
+
+#@common.traclog(logger)
+def parse(rdict, backlog, pipe):
+    cols=""
+    colset={}
+    seq=""
+    dtgen=None
+    for rawline in backlog:
+        line=rawline.strip()
+        #
+        if not line: cotinue
+        eval=rdict[line]
+        if not eval or "junk" in eval[1].groupdict(): continue
+        if "cols" in eval[1].groupdict():
+            cols=eval[1].groupdict()["cols"]
+            if not cols[0:11] in colset:
+                colset[cols[0:11]]="{0}".format(len(colset))
+            continue
+        if "vals" in eval[1].groupdict():
+            yield rtn(
+                    time=common.gentime() if not eval[1].groupdict()["time"] else dtgen.send(eval[1].groupdict()["time"]),
+                    kvs=zip(
+                       cols.strip().split(),
+                       eval[1].groupdict()["vals"].strip().split()
+                       )+[("SEQ",colset[cols[0:11]])],
+                    prefix="sar"
+                  )
+
+            #yield dict(common.concat([
+            #    zip(
+            #        cols.strip().split(),
+            #        eval[1].groupdict()["vals"].strip().split()
+            #    ),
+            #    [("time", common.gentime() if not eval[1].groupdict()["time"] else dtgen.send(eval[1].groupdict()["time"]))]
+            #]))
+        if "date" in eval[1].groupdict():
+            dtgen=sar_datetime(eval[1].groupdict()["date"])
+            next(dtgen)
+        #
+    #for line in pipe.stdout:
+    while True:
+        rawline = pipe.stdout.readline()
+        if not rawline:
+            if not pipe.poll():
+                return
+            else:
+                continue
+        line=rawline.strip()
+        #
+        if not line: continue
+        eval=rdict[line]
+        if not eval or "junk" in eval[1].groupdict(): continue
+        if "cols" in eval[1].groupdict():
+            cols=eval[1].groupdict()["cols"]
+            if not cols[0:11] in colset:
+                colset[cols[0:11]]="{0}".format(len(colset))
+            continue
+        if "vals" in eval[1].groupdict():
+            yield rtn(
+                    time = common.gentime() if not eval[1].groupdict()["time"] else dtgen.send(eval[1].groupdict()["time"]),
+                    kvs = zip(
+                       cols.strip().split(),
+                       eval[1].groupdict()["vals"].strip().split()
+                       )+[("SEQ",colset[cols[0:11]])],
+                    prefix = "sar"
+                    )
+            #yield dict(common.concat([
+            #    zip(
+            #        cols.strip().split(),
+            #        eval[1].groupdict()["vals"].strip().split()
+            #    ),
+            #    [("time", common.gentime() if not eval[1].groupdict()["time"] else dtgen.send(eval[1].groupdict()["time"]))]
+            #]))
+        #
+        if "date" in eval[1].groupdict():
+            dtgen=sar_datetime(eval[1].groupdict()["date"])
+            next(dtgen)
+
+rdict={
+    #    Linux 2.6.32-431.17.1.el6.x86_64 (jpn-zaq50) \t06/23/2015 \t_x86_64_\t(4 CPU)
+    #    Linux 2.6.32-431.17.1.el6.x86_64 (jpn-zaq50)    04/17/15        _x86_64_        (4 CPU)
+    #15:27:24        CPU      %usr     %nice      %sys   %iowait    %steal      %irq     %soft    %guest     %idle
+    #15:27:26        all     36.56      0.00     24.25      0.00      0.00      0.00      0.00      1.13     38.07
+    "^(?P<time>\d{2}:\d{2}:\d{2}) (?P<noon>AM|PM){0,1}\s+(?P<cols>(\S*[^\s0-9\.\-\+]\S*\s+){0,}\S*[^\s0-9\.\-\+]\S*)\s*$": (parse,__name__),
+    "^(?P<time>\d{2}:\d{2}:\d{2}) (?P<noon>AM|PM){0,1}\s+(?P<vals>(\S+\s+){0,}[0-9\.\-\+]+)\s*$": (parse,__name__),
+    "^(?P<junk>Average:.*)\s*$": (parse,__name__),
+    "^\s*(?P<uname>Linux\s+\S+)\s+(?P<host>\S+)\s+(?P<date>\S+)\s+\S+\s+\((?P<numcpu>\d+)\s+CPU\)\s*$": (parse,__name__),
+}
+
+def que2points(d,tags=[]):
+    ts=int(1000000000*time.mktime(tuple([tm for tm in time.strptime("{0}".format(d[1]),"%Y-%m-%dT%H:%M:%S")])))
+    tg="" if not (tags or d[2]) else ",{0}".format(",".join(["{0}={1}".format(k,v) for (k,v) in d[2] + tags]))
+    return "".join(["{0}.{1}{2} value={3} {4}\n".format(d[0],k,tg,v,ts) for (k,v) in d[3]])
+
+if __name__=="__main__":
+    import json
+    import subprocess
+    from logging import basicConfig
+    import influxc
+
+    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("time_precision","s")])
+    hostname=os.uname()[1]
+    basicConfig(level=20)
+    rdict = common.regex_dict(dict(common.concat([ d.items() for d in [rdict,] ])))
+    c=subprocess.Popen("LANG=C sar -A 10", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+    gen=parse(rdict, [], c)
+    for dat in gen:
+        if "INTR" in dat[2][0]:
+            continue
+        influx.write(body=que2points(dat,[("host",hostname)]), opt={"db":"mydb"})

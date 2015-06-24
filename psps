@@ -1,0 +1,233 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys
+import os
+import time
+import datetime
+import json
+import glob
+import itertools
+import sched
+
+from signal import signal, SIGPIPE, SIG_DFL
+signal(SIGPIPE,SIG_DFL)
+
+from logging import getLogger, basicConfig
+
+logger = getLogger(__name__)
+
+logcfg = {
+  #"format": "%(asctime)s.%(msecs).03d %(process)d %(thread)x %(levelname).4s;%(module)s(%(lineno)d/%(funcName)s) %(message)s",
+  "format": "%(message)s",
+  "datefmt": "%Y/%m/%dT%H:%M:%S",
+  "level": 15,
+  "stream": sys.stdout,
+}
+basicConfig(**logcfg)
+
+MPROC_SPEC={
+  "statidx": (
+    ("pid",         int), # 1
+    ("comm",        str), # 2
+    ("state",       str), # 3
+    ("ppid",        int), # 4
+    ("pgrp",        int), # 5
+    ("session",     int), # 6
+    ("tty_nr",      int), # 7
+    ("tpgid",       int), # 8
+    ("flags",       int), # 9
+    ("minflt",      int), #10
+    ("cminflt",     int), #11
+    ("majflt",      int), #12
+    ("cmajflt",     int), #13
+    ("utime",       int), #14
+    ("stime",       int), #15
+    ("cutime",      int), #16
+    ("cstime",      int), #17
+    ("priority",    int), #18
+    ("nice",        int), #19
+    ("num_threads", int), #20
+    ("itrealvalue", int), #21
+    ("starttime",   int), #22
+    ("vsize",       int), #23
+    ("rss",         int), #24
+    ("rsslim",      int), #25
+    ("startcode",   int), #26
+    ("encode",      int), #27
+    ("startstack",  int), #28
+    ("kstkesp",     int), #29
+    ("kstkeip",     int), #30
+    ("signal",      int), #31
+    ("blocked",     int), #32
+    ("sigignore",   int), #33
+    ("sigcactch",   int), #34
+    ("wchan",       int), #35
+    ("nswap",       int), #36
+    ("cnswap",      int), #37
+    ("exit_signal", int), #38
+    ("processor",   int), #39
+    ("rt_priority", int), #40
+    ("policy",      int), #41
+    ("delayacct_blkio_ticks", int), #42
+    ("guest_time",  int), #43
+    ("cguest_time", int), #44
+  ),
+  "statkeep": ("pid","utime", "stime", "cutime", "cstime", "starttime", "delta", "num_threads", "cmdline", "comm"),
+  "statusidx": dict((
+    ("Uid",     lambda x: int(x[0]) ),
+    ("VmSize",  lambda x: int(x[0]) ),
+    ("VmRSS",   lambda x: int(x[0]) ),
+    ("VmPeak",  lambda x: int(x[0]) ),
+    ("VmHWM",   lambda x: int(x[0]) ),
+    ("VmStk",   lambda x: int(x[0]) ),
+    ("VmData",  lambda x: int(x[0]) ),
+    ("VmExe",   lambda x: int(x[0]) ),
+    ("VmSwap",  lambda x: int(x[0]) ),
+    ("voluntary_ctxt_switches", lambda x: int(x[0]) ),
+    ("nonvoluntary_ctxt_switches", lambda x: int(x[0]) ),
+  )),
+  "cpustat": "cputime",
+  "cmdline": "cmdline",
+  "delta_target": ("utime", "stime", "cutime", "cstime"),
+}
+FORMATS={
+    "pid" : "{pid:<6}",
+    "comm" : "{comm:<10}",
+}
+
+    
+def mtimekeeper(interval,init,maxcount):
+    schedule = sched.scheduler(time.time, time.sleep)
+    for count in range(1, 1+maxcount):
+        schedule.enter(init + interval*count - time.time(), 1, lambda x=None: x, ())
+        schedule.run()
+        yield count, time.time()
+
+def mfr(file):
+    try:
+      return [ l.strip() for l in open(file) ]
+    except IOError as e:
+      return []
+
+def maybe_fstl(fl):
+    return None if not fl else fl[0]
+
+def maybe_l(fl):
+    return None if not fl else fl
+
+def mprocf_iter(spec):
+    pids = [ int(p) for p in [ x.split("/")[2] for x in glob.glob("/proc/*")] if p.isdigit()]
+    return ( dict(concat(proc)) for proc in [
+                    [ stat_parse(    maybe_fstl( mfr( "/proc/{0}/stat".format(p)  )), spec["statidx"], spec["statkeep"] ), 
+                      cmdline_parse( maybe_fstl( mfr("/proc/{0}/cmdline".format(p))), spec["cmdline"]   ),
+                      status_parse(  maybe_l(    mfr("/proc/{0}/status".format(p) )), spec["statusidx"] ),
+                      cpustat_parse( maybe_fstl( mfr("/proc/stat"                 )), spec["cpustat"]   ),
+                    ] for p in pids
+           ] if not None in proc )
+
+def stat_parse(s,index,filter):
+    return None if not s else [ ( k[0], k[1](v) )  for (k,v) in zip(index, s.split()) if k[0] in filter]
+
+def cpustat_parse(s,index):
+    return None if not s else [ (index, sum( [int(x) for x in s.split()[1:]] )) ]
+
+def cmdline_parse(s,index):
+    return None if not s else [ ( index, s.replace('\0',' ').strip() )]
+
+def status_parse(l,index):
+    return None if not l else [(y[0], index[y[0]](y[1].split())) for y in [x.split(':') for x in l if ':' in x] if y[0] in index ]
+
+def concat(ll):
+    return list(itertools.chain.from_iterable(ll))
+
+def isotime(ts):
+    return str(datetime.datetime.fromtimestamp(ts))[0:19].replace(' ','T')
+
+def subv(d,ks):
+    return dict([(k,v) for (k,v) in d.items() if k in ks])
+
+def delta_init(o, n, target):
+    return [x for x in target]
+
+def delta_cont(o, n, target):
+    pass 
+
+def mpsi(delta_target):
+    old={}
+    while True:
+        ts=datetime.datetime.fromtimestamp(time.time()).strftime("%Y-%m-%dT%H:%M:%S")
+        new = dict([ (p['pid'], p) for p in mprocf_iter(MPROC_SPEC)
+             if not opts["args"] or ( p['pid'] in opts["args"] or p['comm'].strip('()') in opts["args"] ) ])
+        add_extra_items(old,new,ts)
+        yield new
+        old=new
+
+def time_stamp(ts):
+    return [('time', ts)]
+
+def cpu_usage(new,old=None):
+    if old:
+        u_delta=float((new['utime']+new['cutime'])-(old['utime']+old['cutime']))
+        s_delta=float((new['stime']+new['cstime'])-(old['stime']+old['cstime']))
+        delta=float(new['cputime']-old['cputime'])
+        return zip(['cpu','usr','sys'],[ x/delta for x in [u_delta+s_delta, u_delta, s_delta ]])
+    else:
+        u_delta=float((new['utime']+new['cutime']))
+        s_delta=float((new['stime']+new['cstime']))
+        delta=float(new['cputime']-new['starttime'])
+        return zip(['cpu','usr','sys'],[ x/delta for x in [u_delta+s_delta, u_delta, s_delta ]])
+
+def add_extra_items(olds,news,ts):
+    old_set=set(olds.keys())
+    new_set=set(news.keys())
+    created= new_set-old_set
+    continued= new_set & old_set
+    for pid in continued:
+        for (k,v) in concat([cpu_usage(news[pid],olds[pid]),time_stamp(ts)]):
+            news[pid][k] = v
+    for pid in created:
+        for (k,v) in concat([cpu_usage(news[pid]),time_stamp(ts)]):
+            news[pid][k] = v
+
+TAGS=["comm","pid","Uid"]
+VALS=["cpu","usr","sys","num_threads","VmSize","VmRSS"]
+def infl_filter(d,tags=[]):
+    for (k,v) in d.items():
+        tag=",{0}".format(",".join(["{0}={1}".format(key,val) for (key,val) in v.items() + tags if key in TAGS]))
+        yield "".join(["{0}.{1}{2} value={3} {4}\n".format("ps",key,tag,val,int(1000000000*time.mktime(tuple([tm for tm in time.strptime("{0}".format(v["time"]),"%Y-%m-%dT%H:%M:%S")])))
+            ) for (key,val) in v.items() if key in VALS])
+
+def main(opts):
+    timekeeper=mtimekeeper(interval=opts['interval'], init=time.time(), maxcount=opts['count'])
+    psgen=mpsi(MPROC_SPEC['delta_target'])
+    logger.debug('opts:{0}'.format(opts))
+    import influxc
+    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("time_precision","s")])
+    hostname=os.uname()[1]
+
+    for ((c,t), p ) in itertools.izip(timekeeper, psgen):
+        #logger.info("".join(infl_filter(p)))
+        x="".join(infl_filter(p,[("host", hostname)]))
+        logger.error(p)
+        influx.write(body=x, opt={"db":"mydb"})
+
+def parsed_opts():
+    import optparse
+    import os
+
+    opt = optparse.OptionParser(usage = "usage: %prog [options] arg1 arg2")
+    opt.add_option("-c", "--count", default=5, type="int", help="count to sampling [default: %default]" )
+    opt.add_option("-i", "--interval", default=1, type="int", help="interval to sampling [default: %default]" )
+    opt.add_option("-P", "--prof", default=False, action="store_true", help="interval to sampling [default: %default]" )
+    (opts, args)= opt.parse_args()
+    return dict(opts.__dict__.items() + [("args", args)])
+
+if __name__ == '__main__':
+
+    opts = parsed_opts()
+    if opts['prof']:
+      import cProfile
+      cProfile.run('main(opts)')
+      sys.exit(0)
+    main(opts)
