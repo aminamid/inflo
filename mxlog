@@ -101,7 +101,7 @@ import Queue
 
 def logsum(que,interval_sec=10):
     import influxc
-    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("time_precision","s")])
+    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("precision","s")])
     ts=time.time()
     buckets={}
     while True:
@@ -120,7 +120,7 @@ def logsum(que,interval_sec=10):
             targets = [x for x in buckets ]
             for x in targets:
                 bx=buckets[x]
-                body="".join(["mxlog.{0},level={1},module={2},mxhost={3} count={4} {5}\n".format(k[0],k[1],k[2],k[3],v,int(float(x))*1000000000) for (k,v) in bx.items() ])
+                body="".join(["mxlog.{0},level={1},module={2},mxhost={3} count={4} {5}\n".format(k[0],k[1],k[2],k[3],v,int(float(x))) for (k,v) in bx.items() ])
                 logger.debug(body)
                 influx.write(body=body, opt={"db":"mydb"}) 
                 del(buckets[x])
@@ -130,6 +130,7 @@ def main_influxc(opts):
     import multiprocessing
     que=multiprocessing.Queue()
     p=multiprocessing.Process(target=logsum,args=(que,))
+    p.daemon=True
     p.start()
     logger.debug("{0}".format(opts))
     stat = stat_conns(parse_rule = MXLOG)

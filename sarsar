@@ -149,7 +149,7 @@ rdict={
 }
 
 def que2points(d,tags=[]):
-    ts=int(1000000000*time.mktime(tuple([tm for tm in time.strptime("{0}".format(d[1]),"%Y-%m-%dT%H:%M:%S")])))
+    ts=int(time.mktime(tuple([tm for tm in time.strptime("{0}".format(d[1]),"%Y-%m-%dT%H:%M:%S")])))
     tg="" if not (tags or d[2]) else ",{0}".format(",".join(["{0}={1}".format(k,v) for (k,v) in d[2] + tags]))
     return "".join(["{0}.{1}{2} value={3} {4}\n".format(d[0],k,tg,v,ts) for (k,v) in d[3]])
 
@@ -159,7 +159,7 @@ if __name__=="__main__":
     from logging import basicConfig
     import influxc
 
-    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("time_precision","s")])
+    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("precision","s")])
     hostname=os.uname()[1]
     basicConfig(level=20)
     rdict = common.regex_dict(dict(common.concat([ d.items() for d in [rdict,] ])))

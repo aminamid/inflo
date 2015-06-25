@@ -10,6 +10,8 @@ import glob
 import itertools
 import sched
 
+import influxc
+
 from signal import signal, SIGPIPE, SIG_DFL
 signal(SIGPIPE,SIG_DFL)
 
@@ -195,37 +197,49 @@ VALS=["cpu","usr","sys","num_threads","VmSize","VmRSS"]
 def infl_filter(d,tags=[]):
     for (k,v) in d.items():
         tag=",{0}".format(",".join(["{0}={1}".format(key,val) for (key,val) in v.items() + tags if key in TAGS]))
-        yield "".join(["{0}.{1}{2} value={3} {4}\n".format("ps",key,tag,val,int(1000000000*time.mktime(tuple([tm for tm in time.strptime("{0}".format(v["time"]),"%Y-%m-%dT%H:%M:%S")])))
+        yield "".join(["{0}.{1}{2} value={3} {4}\n".format("ps",key,tag,val,int(time.mktime(tuple([tm for tm in time.strptime("{0}".format(v["time"]),"%Y-%m-%dT%H:%M:%S")])))
             ) for (key,val) in v.items() if key in VALS])
 
 def main(opts):
     timekeeper=mtimekeeper(interval=opts['interval'], init=time.time(), maxcount=opts['count'])
     psgen=mpsi(MPROC_SPEC['delta_target'])
     logger.debug('opts:{0}'.format(opts))
-    import influxc
-    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("time_precision","s")])
+
+    w=influxc.init_poster(opts)
+
     hostname=os.uname()[1]
 
     for ((c,t), p ) in itertools.izip(timekeeper, psgen):
         #logger.info("".join(infl_filter(p)))
         x="".join(infl_filter(p,[("host", hostname)]))
-        logger.error(p)
-        influx.write(body=x, opt={"db":"mydb"})
+        logger.debug(p)
+        w.send(x)
 
 def parsed_opts():
     import optparse
     import os
 
     opt = optparse.OptionParser(usage = "usage: %prog [options] arg1 arg2")
+    opt.add_option("-P", "--prof", default=False, action="store_true", help="get profile [default: %default]" )
+    opt.add_option("-L", "--loglevel", default=15, type="int", help="15:info, 10:debug, 5:trace [default: %default]" )
+
     opt.add_option("-c", "--count", default=5, type="int", help="count to sampling [default: %default]" )
     opt.add_option("-i", "--interval", default=1, type="int", help="interval to sampling [default: %default]" )
-    opt.add_option("-P", "--prof", default=False, action="store_true", help="interval to sampling [default: %default]" )
+
+    opt.add_option("-s", "--host", default="localhost", help="destination server [default: %default]" )
+    opt.add_option("-l", "--port", default=10086, type="int", help="destination port [default: %default]" )
+    opt.add_option("-t", "--timeout", default=3000, help="timeout for http request [default: %default]" )
+    opt.add_option("-u", "--user", default="root", help="user [default: %default]" )
+    opt.add_option("-p", "--pswd", default="root", help="pswd [default: %default]" )
+    opt.add_option("-d", "--db", default=None, help="dbname [default: %default]" )
+
     (opts, args)= opt.parse_args()
     return dict(opts.__dict__.items() + [("args", args)])
 
 if __name__ == '__main__':
 
     opts = parsed_opts()
+    logger.setLevel(opts['loglevel'])
     if opts['prof']:
       import cProfile
       cProfile.run('main(opts)')

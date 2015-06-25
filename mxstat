@@ -7,6 +7,7 @@ import sys
 import itertools
 import functools
 import re
+import influxc
 
 from signal import signal, SIGPIPE, SIG_DFL
 signal(SIGPIPE,SIG_DFL)
@@ -46,6 +47,7 @@ MXSTATPARMS=[
     r"^\s*(?P<count>\d+)/(?P<min>\d+)/(?P<max>\d+)/(?P<mean>\d+)/(?P<variance>\d+)/(?P<exceed>\d+)\s*$",
     r"^\s*(?P<throughput>\d+)/sec (?P<tatavg>\d+) ms \[(?P<threshuse>\d+)\] (?P<cnttotal>\d+)/(?P<cntbelow>\d+)/(?P<cntabove>\d+) (?P<tatsum>\d+)/(?P<tatmin>\d+)/(?P<tatmax>\d+)\s*$",
     r"^\s*(?P<label>\S+) W=(?P<wavg>\d+)/(?P<wmin>\d+)/(?P<wmax>\d+)/(?P<wvar>\d+)/(?P<wthreshold>\d+) S=(?P<savg>\d+)/(?P<smin>\d+)/(?P<smax>\d+)/(?P<svar>\d+)/(?P<sthreshold>\d+) P=(?P<pcur>\d+)/(?P<pmin>\d+)/(?P<pmax>\d+)/(?P<pcfgmin>\d+)/(?P<pcfgmax>\d+)/(?P<pmaxthreshold>\d+) Q=(?P<qcnt>\d+)/(?P<qmin>\d+)/(?P<qmax>\d+)/(?P<qthreshold>\d+)/(?P<qadd>\d+)/(?P<qremove>\d+)/(?P<qnotaquired>\d+)/(?P<qnotaquiredthreshold>\d+) R=(?P<rworking>\d+)/(?P<ridle>\d+)/(?P<rcreated>\d+)/(?P<rdestroyed>\d+)/(?P<rbegin>\d+)/(?P<rend>\d+)\s*$",
+    r"^\s*(?P<throughput>\d+)bytes/sec (?P<tatavg>\d+) bytes \[(?P<threshuse>\d+)\] (?P<cnttotal>\d+)/(?P<cntbelow>\d+)/(?P<cntabove>\d+) (?P<tatsum>\d+)/(?P<tatmin>\d+)/(?P<tatmax>\d+)\s*$",
 ]
 
 REGX_MXSTATPARMS = [re.compile(x) for x in MXSTATPARMS]
@@ -60,7 +62,7 @@ def parse_mxstatparms(s):
         search = regx.search(s)
         if not search: continue
         return search.groupdict() 
-    return {}
+    return {"ERROR_couldnotparse": s}
 
 def parse_mxlogparms(s):
     return dict([x.replace(' ','_').split('=') if x.count('=') == 1 else (str(i), x.replace(' ','_')) for (i,x) in enumerate(s.strip().split(":"))])
@@ -70,7 +72,7 @@ def dt(s):
     return (datetime.datetime.strptime(s[:15], MXTIMEFMT)+datetime.timedelta(microseconds=int(s[15:18]))).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
 def ts(s):
-    return int(1000000000*time.mktime(tuple([tm for tm in time.strptime(s[:15],"%Y%m%d %H%M%S")])))
+    return int(time.mktime(tuple([tm for tm in time.strptime(s[:15],"%Y%m%d %H%M%S")])))
 
 def mxstat(func):
     @functools.wraps(func)
@@ -120,13 +122,12 @@ def main_local(opts):
             stdout.info(" ".join(["{0}".format(d[key])  for key in MXALL ]))
 
 def dict2influx(d):
-    stdout.info("".join(["mxstat.{0},module={1},mxhost={2} {3} {4}\n".format(d['event'],d['module'],d['host'],",".join(["=".join(x) for x in d['parms'].items() ]),d['time'])]))
+    logger.debug(d)
+    return "".join(["mxstat.{0},module={1},mxhost={2} {3} {4}\n".format(d['event'],d['module'],d['host'],",".join(["=".join(x) for x in d['parms'].items() ]),d['time'])])
 
 
 def main_influxc(opts):
-    import influxc
-    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("time_precision","s")])
-
+    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("precision","s")])
     logger.debug("{0}".format(opts))
     stat = stat_conns(parse_rule = MXSTAT)
     stat.next()
@@ -134,6 +135,7 @@ def main_influxc(opts):
     for l in sys.stdin:
         logger.debug(l.strip())
         d=stat.send(l)
+        if not d: continue
         influx.write(body=dict2influx(d), opt={"db":"mydb"})
 
 def parsed_opts():
@@ -151,6 +153,7 @@ if __name__ == '__main__':
  
     opts = parsed_opts()
     logger.setLevel(opts['loglevel'])
+    getLogger("influxc").setLevel(opts['loglevel'])
     if opts['prof']:
       import cProfile
       cProfile.run('main_local(opts)')

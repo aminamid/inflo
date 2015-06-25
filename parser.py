@@ -77,7 +77,9 @@ def pool_run(target, argss):
     for args in argss:
         ques.append(multiprocessing.Queue()) 
         procs.append(multiprocessing.Process(target=target,args=common.concat([[ques[-1]],args])))
-    for p in procs: p.start()
+    for p in procs:
+        p.daemon=True
+        p.start()
     while True:
         logger.error("######### pool_run looop begin")
         for que in ques:
