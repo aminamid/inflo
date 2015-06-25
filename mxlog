@@ -1,0 +1,168 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import time
+import datetime
+import sys
+import itertools
+import functools
+import re
+
+from signal import signal, SIGPIPE, SIG_DFL
+signal(SIGPIPE,SIG_DFL)
+
+from logging import getLogger, StreamHandler, Formatter
+
+def setM(obj, l):
+    for m in l:
+        getattr(obj, m[0])(*m[1])
+    return obj
+
+def loginit(logname, format="%(message)s", stream=sys.stderr, level=15, datefmt="%Y-%m-%dT%H:%M:%S" ):
+    return setM(getLogger(logname), [
+        ("setLevel", [level]),
+        ("addHandler", [setM(StreamHandler(stream),[("setFormatter", [Formatter(fmt=format,datefmt=datefmt)])])])
+      ])
+
+loggercfg = {
+  "format": "%(asctime)s.%(msecs).03d %(process)d %(thread)x %(levelname).4s;%(module)s(%(lineno)d/%(funcName)s) %(message)s",
+  "level": 10,
+}
+logstdcfg = {
+  "level": 10,
+  "stream": sys.stdout,
+}
+
+logger = loginit(__name__,**loggercfg)
+stdout = loginit("std",**logstdcfg)
+
+
+#MXLOG = r"^(?P<rawtime>\d{8} \d{9}[+-]\d+) (?P<host>\S+) (?P<module>\S+) (?P<pid>\d+) (?P<ppid>\d+) (?P<tid>\d+) (?P<level>[^;\s]+);(?P<event>[^\)]+\))[: ]*(?P<parms>[^\r\n]*)\s*$"
+MXLOG = r"^(?P<rawtime>\d{8} \d{9}[+-]\d+) (?P<host>\S+) (?P<module>\S+) (?P<pid>\d+) (?P<ppid>\d+) (?P<tid>\d+) (?P<level>[^;\s]+);(?P<event>[^\(]+)[^\)]+\)[: ]*(?P<parms>[^\r\n]*)\s*$"
+MXALL = ["time", "host", "module", "pid", "ppid", "tid", "level", "event"]
+MXTIMEFMT = '%Y%m%d %H%M%S'
+
+time.strptime("20000101 000000", MXTIMEFMT) #work around for http://bugs.python.org/issue7980
+
+def parse_mxlogparms(s):
+    return dict([x.replace(' ','_').split('=') if x.count('=') == 1 else (str(i), x.replace(' ','_')) for (i,x) in enumerate(s.strip().split(":"))])
+
+def dt(s):
+    #dt= datetime.datetime.strptime(s[:15], MXTIMEFMT)+datetime.timedelta(microseconds=int(s[15:18]))
+    return (datetime.datetime.strptime(s[:15], MXTIMEFMT)+datetime.timedelta(microseconds=int(s[15:18]))).strftime("%Y-%m-%dT%H:%M:%S.%f")
+
+def ts(s):
+    return time.mktime(tuple([tm for tm in time.strptime(s[:15],"%Y%m%d %H%M%S")]))
+
+def ts10(s):
+    return time.mktime(tuple([tm for tm in time.strptime("{0}9".format(s[:14]),"%Y%m%d %H%M%S")]))
+
+def mxlog(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        d = func(*args, **kwargs)
+        if not d: 
+            return None 
+        return dict([x if not x[0] in  ["rawtime", "parms"] else (x[0], parse_mxlogparms(x[1])) if x[0] == "parms" else ("time", ts(x[1])) for x in d.items()])
+    return wrapper
+
+@mxlog
+def parse_line(line, regx):
+    search = regx.search(line)
+    return search.groupdict() if search else None
+
+
+def stat_conns(parse_rule):
+    regx = re.compile(parse_rule)
+    conns={}
+    event=""
+    for i in itertools.count():
+        raw_event = yield event if event else None
+        event = parse_line( raw_event, regx )
+        #event = parse_line( (yield event if event else None) , regx)
+
+def main_local(opts):
+    logger.debug("{0}".format(opts))
+    stat = stat_conns(parse_rule = MXLOG)
+    stat.next()
+    logger.info(" ".join(opts["args"] if opts["args"] else MXALL))
+    for l in sys.stdin:
+        logger.debug(l.strip())
+        d=stat.send(l)
+        if not d:
+            logger.warning("CouldNotParse:{0}".format(l.replace("\n","\\n")))
+            continue
+        if opts["args"]:
+            stdout.info(" ".join(["{0}".format(d[key]) for key in [x for x in opts["args"] if not x.startswith('s') ] if key in d] + ["{0}".format(d["parms"][y[1:]] if d["parms"].get(y[1:]) else "_") for y in  [x for x in opts["args"] if x.startswith('s') ]]  ))
+        else:
+            stdout.info(" ".join(["{0}".format(d[key])  for key in MXALL ]))
+
+import Queue
+
+def logsum(que,interval_sec=10):
+    import influxc
+    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("time_precision","s")])
+    ts=time.time()
+    buckets={}
+    while True:
+        try:
+            entry=que.get(block=True,timeout=1)
+            ets=entry["time"]
+            key=(entry["event"] if not entry["event"].startswith("MsgTrace") else "M_{0}".format(entry["parms"]["0"]), entry["level"], entry["module"], entry["host"])
+            if not str(ets) in buckets:
+                buckets[str(ets)]={}
+            if not key in buckets[str(ets)]:
+                buckets[str(ets)][key]=0 
+            buckets[str(ets)][key]+=1
+        except Queue.Empty as e:
+            pass
+        if (time.time() - ts) > interval_sec:
+            targets = [x for x in buckets ]
+            for x in targets:
+                bx=buckets[x]
+                body="".join(["mxlog.{0},level={1},module={2},mxhost={3} count={4} {5}\n".format(k[0],k[1],k[2],k[3],v,int(float(x))*1000000000) for (k,v) in bx.items() ])
+                logger.debug(body)
+                influx.write(body=body, opt={"db":"mydb"}) 
+                del(buckets[x])
+            ts+=interval_sec
+
+def main_influxc(opts):
+    import multiprocessing
+    que=multiprocessing.Queue()
+    p=multiprocessing.Process(target=logsum,args=(que,))
+    p.start()
+    logger.debug("{0}".format(opts))
+    stat = stat_conns(parse_rule = MXLOG)
+    logger.debug("init generator:".format(stat.next()))
+    for l in sys.stdin:
+        logger.debug("loop:{0}".format(l))
+        logger.debug(l.strip())
+        d=stat.send(l)
+        if not d:
+            logger.warning("CouldNotParse:{0}".format(l.replace("\n","\\n")))
+            continue
+        que.put(d)
+
+def parsed_opts():
+    import optparse
+    import os
+    opt = optparse.OptionParser()
+    opt.add_option("-P", "--prof", default=False, action="store_true", help="interval to sampling [default: %default]" )
+    opt.add_option("-L", "--loglevel", default=25, type="int", help="15:info, 10:debug, 5:trace [default: %default]" )
+    opt.add_option("-i", "--with_influxc", default=False, action="store_true", help="send data for influxdb [default: %default]" )
+    opt.add_option("-u", "--url_for_influxc", default='["localhost",10086,"mydb"]', help="which influxdb to be use [default: %default]" )
+    (opts, args)= opt.parse_args()
+    return dict(opts.__dict__.items() + [("args", args)])
+
+if __name__ == '__main__':
+ 
+    opts = parsed_opts()
+    logger.setLevel(opts['loglevel'])
+    if opts['prof']:
+      import cProfile
+      cProfile.run('main_local(opts)')
+      sys.exit(0)
+    if opts["with_influxc"]:
+        main_influxc(opts)
+        sys.exit(0)
+    main_local(opts)

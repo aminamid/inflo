@@ -190,7 +190,7 @@ def add_extra_items(olds,news,ts):
         for (k,v) in concat([cpu_usage(news[pid]),time_stamp(ts)]):
             news[pid][k] = v
 
-TAGS=["comm","pid","Uid"]
+TAGS=["comm","pid","Uid","host"]
 VALS=["cpu","usr","sys","num_threads","VmSize","VmRSS"]
 def infl_filter(d,tags=[]):
     for (k,v) in d.items():
