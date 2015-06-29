@@ -1,14 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from logging import getLogger
-logger=getLogger(__name__)
+
 import time
 import datetime
 import os
 import sys
-sys.path.append("{0}/libs".format(os.path.dirname(os.path.abspath(__file__))))
+import json
+import subprocess
 
+import influxc
+
+sys.path.append("{0}/libs".format(os.path.dirname(os.path.abspath(__file__))))
 import common
+
+logger = common.loginit(__name__,**common.loggercfg)
+stdout = common.loginit("std",**common.stdoutcfg)
 
 TAGS=[
         "CPU",
@@ -153,19 +159,43 @@ def que2points(d,tags=[]):
     tg="" if not (tags or d[2]) else ",{0}".format(",".join(["{0}={1}".format(k,v) for (k,v) in d[2] + tags]))
     return "".join(["{0}.{1}{2} value={3} {4}\n".format(d[0],k,tg,v,ts) for (k,v) in d[3]])
 
-if __name__=="__main__":
-    import json
-    import subprocess
-    from logging import basicConfig
-    import influxc
+def main(opts):
 
-    influx=influxc.InfluxClient(httpcon={"host":"127.0.0.1","port":10086,"timeout":30000},auth=[("u","root"),("p","root")],base=[("precision","s")])
+    w=influxc.init_poster(opts)
     hostname=os.uname()[1]
-    basicConfig(level=20)
-    rdict = common.regex_dict(dict(common.concat([ d.items() for d in [rdict,] ])))
-    c=subprocess.Popen("LANG=C sar -A 10", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
-    gen=parse(rdict, [], c)
+    rdicts = common.regex_dict(dict(common.concat([ d.items() for d in [rdict,] ])))
+    c=subprocess.Popen("LANG=C sar {0} -A {1}".format("" if not opts["output"] else "-o {0}".format(opts["output"]), opts["interval"]), shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+    gen=parse(rdicts, [], c)
     for dat in gen:
-        if "INTR" in dat[2][0]:
+        if opts["exclude"] in dat[2][0]:
             continue
-        influx.write(body=que2points(dat,[("host",hostname)]), opt={"db":"mydb"})
+        x=que2points(dat,[("host",hostname)])
+        stdout.info(x)
+        w.send(x)
+
+def parsed_opts():
+    import optparse
+    import os
+
+    opt = optparse.OptionParser(usage = "usage: %prog [options] arg1 arg2")
+    common.common_params(opt)
+    influxc.influxc_params(opt)
+
+    opt.add_option("-i", "--interval", default=10, type="int", help="interval to sampling [default: %default]" )
+    opt.add_option("-o", "--output", default=None, help="output to sar binary file[default: %default]" )
+    opt.add_option("-E", "--exclude", default="INTR", help="exclude data [default: %default]" )
+
+    (opts, args)= opt.parse_args()
+    return dict(opts.__dict__.items() + [("args", args)])
+
+if __name__ == '__main__':
+
+    opts = parsed_opts()
+    logger.setLevel(opts['loglevel'])
+    stdout.setLevel(opts['stdoutlevel'])
+    if opts['prof']:
+      import cProfile
+      cProfile.run('main(opts)')
+      sys.exit(0)
+    main(opts)
+

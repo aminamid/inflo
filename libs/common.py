@@ -38,6 +38,13 @@ class regex_dict(dict):
 
 
 ##  logging
+loggercfg = {
+  "format": "%(asctime)s.%(msecs).03d %(process)d %(thread)x %(levelname).4s;%(module)s(%(lineno)d/%(funcName)s) %(message)s",
+}
+stdoutcfg = {
+  "stream": sys.stdout,
+}
+
 def change_state(obj, method_arglist_tpls):
     for m_as in method_arglist_tpls:
         getattr(obj, m_as[0])(*m_as[1])
@@ -52,6 +59,11 @@ def loginit(logname, format="%(message)s", stream=sys.stderr, level=15, datefmt=
         )])
       ])
 
+def common_params(opt):
+    opt.add_option("-P", "--prof", default=False, action="store_true", help="get profile [default: %default]" )
+    opt.add_option("-L", "--loglevel", default=20, type="int", help="20:info, 10:debug, 5:trace [default: %default]" )
+    opt.add_option("-S", "--stdoutlevel", default=20, type="int", help="20:info, 10:debug, 5:trace [default: %default]" )
+
 ## logging functions
 
 import functools
@@ -65,4 +77,16 @@ def traclog(logger):
             return result
         return trac
     return recvfunc
+
+# json
+
+def jsonpretty(xs):
+    try:
+        if isinstance(xs, list):
+            return json.dumps([ json.loads(x) for x in xs ], indent=2, ensure_ascii=False)
+        else:
+            return json.dumps(json.loads(xs), indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.warn("Faile to parse as json: {0}".format(xs))
+        return xs
 

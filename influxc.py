@@ -8,21 +8,13 @@ import httplib
 import urllib
 import json
 
+from signal import signal, SIGPIPE, SIG_DFL
+signal(SIGPIPE,SIG_DFL)
 
 sys.path.append("{0}/libs".format(os.path.dirname(os.path.abspath(__file__))))
 import common
-
-loggercfg = {
-  "format": "%(asctime)s.%(msecs).03d %(process)d %(thread)x %(levelname).4s;%(module)s(%(lineno)d/%(funcName)s) %(message)s",
-  "level": 15,
-}
-logstdcfg = {
-  "stream": sys.stdout,
-  "level": 15,
-}
-
-logger = common.loginit(__name__,**loggercfg)
-stdout = common.loginit("std",**logstdcfg)
+logger = common.loginit(__name__,**common.loggercfg)
+stdout = common.loginit("std",**common.stdoutcfg)
 
 def concat( lsts ):
         return list(itertools.chain(*lsts))
@@ -46,6 +38,7 @@ def http_conn(url,retry=3):
     yield receive:
        arg of httplib.HTTPSConnection(host[, port[, key_file[, cert_file[, strict[, timeout[, source_address]]]]]])
     """
+    logger.debug("url={0}".format(url))
     conn=httplib.HTTPConnection(**url)
     while True:
         for i in range(retry):
@@ -62,6 +55,7 @@ def http_req(conn,retry=3):
     yield receive:
         [ httpconnection, arg of(HTTPConnection.request(method, url[, body[, headers]])) ]
     """
+    logger.debug("conn={0}".format(conn))
     contents=None
     _conn=next(conn)
     while True:
@@ -79,7 +73,6 @@ def http_req(conn,retry=3):
                 _conn=next(conn)
             logger.error('HTTPReqFail:{0}:{1}:{2}:retry={3}:{4}'.format(r2.status, r2.reason,recv,i,e))
 
-@common.traclog(logger)
 def influx_getter(req,influx_args):
     """
     yield receive:
@@ -94,7 +87,6 @@ def influx_getter(req,influx_args):
                        "headers":{ "Content-type": "application/x-www-form-urlencoded", "Accept": "text/plain", "Connection": "keep-alive" },
                            })
 
-@common.traclog(logger)
 def influx_poster(req,influx_args):
     """
     yield receive:
@@ -111,7 +103,7 @@ def influx_poster(req,influx_args):
                            })
 
 
-def init(gen_func, http_parms, influx_parms):
+def _create_gens(gen_func, http_parms, influx_parms):
     req=http_req(http_conn(dict(http_parms)))
     next(req)
     gen=gen_func(req,influx_parms)
@@ -121,12 +113,24 @@ def init(gen_func, http_parms, influx_parms):
 def init_getter(opts):
     http_parms=[(k,v) for (k,v) in opts.items() if k in ["host", "port", "timeout"]]
     influx_parms=[(k,v) for (k,v) in opts.items() if k in ["u","p","precision","db"] and v ]
-    return init(influx_getter, http_parms, influx_parms)
+    return _create_gens(influx_getter, http_parms, influx_parms)
 
 def init_poster(opts):
     http_parms=[(k,v) for (k,v) in opts.items() if k in ["host", "port", "timeout"]]
     influx_parms=[(k,v) for (k,v) in opts.items() if k in ["u","p","precision","db"] and v ]
-    return init(influx_poster, http_parms, influx_parms)
+    return _create_gens(influx_poster, http_parms, influx_parms)
+
+def influxc_params(opt):
+
+    opt.add_option("-s", "--host", default="localhost", help="destination server [default: %default]" )
+    opt.add_option("-l", "--port", default=10086, type="int", help="destination port [default: %default]" )
+    opt.add_option("-t", "--timeout", default=3000, help="timeout for http request [default: %default]" )
+
+    opt.add_option("-u", "--user", default="root", help="user [default: %default]" )
+    opt.add_option("-p", "--pswd", default="root", help="pswd [default: %default]" )
+    opt.add_option("-d", "--db", default=None, help="dbname [default: %default]" )
+    opt.add_option("-g", "--precision", default="s", help="precision [default: %default]" )
+
 
 CMDS={
         "default": ( "SHOW DATABASES", "SHOW MEASUREMENTS",),
@@ -139,16 +143,12 @@ def parsed_opts():
     import optparse
     import os
     opt = optparse.OptionParser("{0}".format(CMDS))
-    opt.add_option("-P", "--prof", default=False, action="store_true", help="get profile [default: %default]" )
-    opt.add_option("-L", "--loglevel", default=15, type="int", help="15:info, 10:debug, 5:trace [default: %default]" )
+    common.common_params(opt)
+    influxc_params(opt)
+
     opt.add_option("-W", "--write", default=False, action="store_true", help="write points [default: %default]" )
 
-    opt.add_option("-s", "--host", default="localhost", help="destination server [default: %default]" )
-    opt.add_option("-l", "--port", default=10086, type="int", help="destination port [default: %default]" )
-    opt.add_option("-t", "--timeout", default=3000, help="timeout for http request [default: %default]" )
-    opt.add_option("-u", "--user", default="root", help="user [default: %default]" )
-    opt.add_option("-p", "--pswd", default="root", help="pswd [default: %default]" )
-    opt.add_option("-d", "--db", default=None, help="dbname [default: %default]" )
+
     (opts, args)= opt.parse_args()
     return dict(vars(opts).items() + [("args", args)])
 
@@ -160,7 +160,7 @@ def main(opts):
     r=init_getter(opts)
 
     if opts["write"]:
-        logger.info(jsonpretty( w.send("\n".join(opts["args"])) ))
+        logger.debug(jsonpretty( w.send("\n".join(opts["args"])) ))
         return
     if not opts["args"] or opts["args"][0] in CMDS:
         for query in CMDS[opts["args"][0] if opts["args"] else "default"]:
@@ -174,6 +174,7 @@ if __name__ == '__main__':
 
     opts = parsed_opts()
     logger.setLevel(opts['loglevel'])
+    stdout.setLevel(opts['stdoutlevel'])
     if opts['prof']:
       import cProfile
       cProfile.run('main(opts)')

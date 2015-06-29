@@ -10,23 +10,15 @@ import glob
 import itertools
 import sched
 
-import influxc
-
 from signal import signal, SIGPIPE, SIG_DFL
 signal(SIGPIPE,SIG_DFL)
 
-from logging import getLogger, basicConfig
+sys.path.append("{0}/libs".format(os.path.dirname(os.path.abspath(__file__))))
+import common
+logger = common.loginit(__name__,**common.loggercfg)
+stdout = common.loginit("std",**common.stdoutcfg)
 
-logger = getLogger(__name__)
-
-logcfg = {
-  #"format": "%(asctime)s.%(msecs).03d %(process)d %(thread)x %(levelname).4s;%(module)s(%(lineno)d/%(funcName)s) %(message)s",
-  "format": "%(message)s",
-  "datefmt": "%Y/%m/%dT%H:%M:%S",
-  "level": 15,
-  "stream": sys.stdout,
-}
-basicConfig(**logcfg)
+import influxc
 
 MPROC_SPEC={
   "statidx": (
@@ -192,15 +184,15 @@ def add_extra_items(olds,news,ts):
         for (k,v) in concat([cpu_usage(news[pid]),time_stamp(ts)]):
             news[pid][k] = v
 
-TAGS=["comm","pid","Uid","host"]
-VALS=["cpu","usr","sys","num_threads","VmSize","VmRSS"]
-def infl_filter(d,tags=[]):
+def infl_filter(d,opts,extra_tags=[]):
     for (k,v) in d.items():
-        tag=",{0}".format(",".join(["{0}={1}".format(key,val) for (key,val) in v.items() + tags if key in TAGS]))
+        tag=",{0}".format(",".join(["{0}={1}".format(key,val) for (key,val) in v.items() + extra_tags if key in opts["tags"]]))
         yield "".join(["{0}.{1}{2} value={3} {4}\n".format("ps",key,tag,val,int(time.mktime(tuple([tm for tm in time.strptime("{0}".format(v["time"]),"%Y-%m-%dT%H:%M:%S")])))
-            ) for (key,val) in v.items() if key in VALS])
+            ) for (key,val) in v.items() if key in opts["values"]])
 
 def main(opts):
+    for k in ["tags","values"]:
+        opts[k] = json.loads(opts[k])
     timekeeper=mtimekeeper(interval=opts['interval'], init=time.time(), maxcount=opts['count'])
     psgen=mpsi(MPROC_SPEC['delta_target'])
     logger.debug('opts:{0}'.format(opts))
@@ -210,9 +202,9 @@ def main(opts):
     hostname=os.uname()[1]
 
     for ((c,t), p ) in itertools.izip(timekeeper, psgen):
-        #logger.info("".join(infl_filter(p)))
-        x="".join(infl_filter(p,[("host", hostname)]))
-        logger.debug(p)
+        logger.debug(json.dumps(p,indent=2, ensure_ascii=False))
+        x="".join(infl_filter(p,opts,[("host", hostname)]))
+        stdout.info(x)
         w.send(x)
 
 def parsed_opts():
@@ -220,18 +212,14 @@ def parsed_opts():
     import os
 
     opt = optparse.OptionParser(usage = "usage: %prog [options] arg1 arg2")
-    opt.add_option("-P", "--prof", default=False, action="store_true", help="get profile [default: %default]" )
-    opt.add_option("-L", "--loglevel", default=15, type="int", help="15:info, 10:debug, 5:trace [default: %default]" )
+    common.common_params(opt) 
+    influxc.influxc_params(opt)
 
     opt.add_option("-c", "--count", default=5, type="int", help="count to sampling [default: %default]" )
     opt.add_option("-i", "--interval", default=1, type="int", help="interval to sampling [default: %default]" )
+    opt.add_option("-T", "--tags", default='["comm","pid","Uid","host"]', help="set column names of tags as json [default: %default]" )
+    opt.add_option("-V", "--values", default='["cpu","usr","sys","num_threads","VmSize","VmRSS"]', help="set column names of values as json [default: %default]" )
 
-    opt.add_option("-s", "--host", default="localhost", help="destination server [default: %default]" )
-    opt.add_option("-l", "--port", default=10086, type="int", help="destination port [default: %default]" )
-    opt.add_option("-t", "--timeout", default=3000, help="timeout for http request [default: %default]" )
-    opt.add_option("-u", "--user", default="root", help="user [default: %default]" )
-    opt.add_option("-p", "--pswd", default="root", help="pswd [default: %default]" )
-    opt.add_option("-d", "--db", default=None, help="dbname [default: %default]" )
 
     (opts, args)= opt.parse_args()
     return dict(opts.__dict__.items() + [("args", args)])
@@ -240,6 +228,7 @@ if __name__ == '__main__':
 
     opts = parsed_opts()
     logger.setLevel(opts['loglevel'])
+    stdout.setLevel(opts['stdoutlevel'])
     if opts['prof']:
       import cProfile
       cProfile.run('main(opts)')
