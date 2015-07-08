@@ -88,7 +88,7 @@ def logsum(que, opts, interval_sec=10):
             targets = [x for x in buckets ]
             for x in targets:
                 bx=buckets[x]
-                body="".join(["mxlog.{0},level={1},module={2},mxhost={3} count={4} {5}\n".format(k[0],k[1],k[2],k[3],v,int(float(x))) for (k,v) in bx.items() ])
+                body="".join(["mxlog.{0},level={1},module={2},mxhost={3} value={4} {5}\n".format(k[0],k[1],k[2],k[3],v,int(float(x))) for (k,v) in bx.items() ])
                 stdout.info(body)
                 w.send(body)
                 del(buckets[x])

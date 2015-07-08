@@ -25,10 +25,12 @@ MXSTAT = r"^(?P<rawtime>\d{8} \d{9}[+-]\d+) (?P<host>\S+) (?P<module>\S+) (?P<pi
 # StatMSSRetrMsg(77/570) 0/sec 0 ms [0] 0/0/0 0/0/0
 MXSTATPARMS=[
     r"^\s*(?P<value>\d+)\s*$",
-    r"^\s*(?P<count>\d+)/(?P<min>\d+)/(?P<max>\d+)/(?P<mean>\d+)/(?P<variance>\d+)/(?P<exceed>\d+)\s*$",
-    r"^\s*(?P<throughput>\d+)/sec (?P<tatavg>\d+) ms \[(?P<threshuse>\d+)\] (?P<cnttotal>\d+)/(?P<cntbelow>\d+)/(?P<cntabove>\d+) (?P<tatsum>\d+)/(?P<tatmin>\d+)/(?P<tatmax>\d+)\s*$",
-    r"^\s*(?P<label>\S+) W=(?P<wavg>\d+)/(?P<wmin>\d+)/(?P<wmax>\d+)/(?P<wvar>\d+)/(?P<wthreshold>\d+) S=(?P<savg>\d+)/(?P<smin>\d+)/(?P<smax>\d+)/(?P<svar>\d+)/(?P<sthreshold>\d+) P=(?P<pcur>\d+)/(?P<pmin>\d+)/(?P<pmax>\d+)/(?P<pcfgmin>\d+)/(?P<pcfgmax>\d+)/(?P<pmaxthreshold>\d+) Q=(?P<qcnt>\d+)/(?P<qmin>\d+)/(?P<qmax>\d+)/(?P<qthreshold>\d+)/(?P<qadd>\d+)/(?P<qremove>\d+)/(?P<qnotaquired>\d+)/(?P<qnotaquiredthreshold>\d+) R=(?P<rworking>\d+)/(?P<ridle>\d+)/(?P<rcreated>\d+)/(?P<rdestroyed>\d+)/(?P<rbegin>\d+)/(?P<rend>\d+)\s*$",
-    r"^\s*(?P<throughput>\d+)bytes/sec (?P<tatavg>\d+) bytes \[(?P<threshuse>\d+)\] (?P<cnttotal>\d+)/(?P<cntbelow>\d+)/(?P<cntabove>\d+) (?P<tatsum>\d+)/(?P<tatmin>\d+)/(?P<tatmax>\d+)\s*$",
+    r"^\s*(?P<count>\d+)/(?P<min>\d+)/(?P<max>\d+)/(?P<value>\d+)/(?P<variance>\d+)/(?P<exceed>\d+)\s*$",
+    r"^\s*(?P<throughput>\d+)/sec (?P<value>\d+) ms \[(?P<threshuse>\d+)\] (?P<cnttotal>\d+)/(?P<cntbelow>\d+)/(?P<cntabove>\d+) (?P<tatsum>\d+)/(?P<tatmin>\d+)/(?P<tatmax>\d+)\s*$",
+    r"^\s*(?P<label>\S+) W=(?P<wavg>\d+)/(?P<wmin>\d+)/(?P<wmax>\d+)/(?P<wvar>\d+)/(?P<wthreshold>\d+) S=(?P<savg>\d+)/(?P<smin>\d+)/(?P<smax>\d+)/(?P<svar>\d+)/(?P<sthreshold>\d+) P=(?P<pcur>\d+)/(?P<pmin>\d+)/(?P<pmax>\d+)/(?P<pcfgmin>\d+)/(?P<pcfgmax>\d+)/(?P<pmaxthreshold>\d+) Q=(?P<value>\d+)/(?P<qmin>\d+)/(?P<qmax>\d+)/(?P<qthreshold>\d+)/(?P<qadd>\d+)/(?P<qremove>\d+)/(?P<qnotaquired>\d+)/(?P<qnotaquiredthreshold>\d+) R=(?P<rworking>\d+)/(?P<ridle>\d+)/(?P<rcreated>\d+)/(?P<rdestroyed>\d+)/(?P<rbegin>\d+)/(?P<rend>\d+)\s*$",
+    r"^\s*(?P<label>\S+) W=(?P<wavg>\d+)/(?P<wmin>\d+)/(?P<wmax>\d+)/(?P<wvar>\d+)/(?P<wthreshold>\d+) S=(?P<savg>\d+)/(?P<smin>\d+)/(?P<smax>\d+)/(?P<svar>\d+)/(?P<sthreshold>\d+) P=(?P<pcur>\d+)/(?P<pmin>\d+)/(?P<pmax>\d+)/(?P<pcfgmin>\d+)/(?P<pcfgmax>\d+)/(?P<pmaxthreshold>\d+)/(?P<punknown>\d+) Q=(?P<value>\d+)/(?P<qmin>\d+)/(?P<qmax>\d+)/(?P<qthreshold>\d+)/(?P<qadd>\d+)/(?P<qremove>\d+)/(?P<qnotaquired>\d+)/(?P<qnotaquiredthreshold>\d+) R=(?P<rworking>\d+)/(?P<ridle>\d+)/(?P<rcreated>\d+)/(?P<rdestroyed>\d+)/(?P<rbegin>\d+)/(?P<rend>\d+)\s*$",
+    r"^\s*(?P<label>\S+) S=(?P<savg>\d+)/(?P<smin>\d+)/(?P<smax>\d+)/(?P<svar>\d+)/(?P<sthreshold>\d+) P=(?P<pcur>\d+)/(?P<pmin>\d+)/(?P<pmax>\d+)/(?P<pcfgmin>\d+)/(?P<pcfgmax>\d+)/(?P<pmaxthreshold>\d+)/(?P<punknown>\d+) R=(?P<rworking>\d+)/(?P<ridle>\d+)/(?P<rcreated>\d+)/(?P<rdestroyed>\d+)/(?P<rbegin>\d+)/(?P<rend>\d+) C=(?P<c1>\d+)/(?P<c2>\d+)/(?P<c3>\d+)\s*$",
+    r"^\s*(?P<throughput>\d+)bytes/sec (?P<value>\d+) bytes \[(?P<threshuse>\d+)\] (?P<cnttotal>\d+)/(?P<cntbelow>\d+)/(?P<cntabove>\d+) (?P<tatsum>\d+)/(?P<tatmin>\d+)/(?P<tatmax>\d+)\s*$",
 ]
 
 REGX_MXSTATPARMS = [re.compile(x) for x in MXSTATPARMS]
