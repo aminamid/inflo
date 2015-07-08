@@ -1,4 +1,6 @@
-nohup tail -F ~/log/*.stat | ./mxstat -i &
-nohup tail -F ~/log/*.log | ./mxlog -i &
-nohup ./psps -i 10 -c 65535 &
-nohup ./sarsar &
+nohup cat ../stats/*.stat | ./mxstat -d mydb -S30 &
+nohup cat ../logs/mta*.log | ./mxlog  -d mydb -S30 &
+nohup cat ../logs/imap*.log | ./mxlog  -d mydb -S30 &
+nohup cat ../logs/pop*.log | ./mxlog  -d mydb -S30 &
+#nohup ./psps -d mydb -S30 -i 10 -c 65535 &
+#nohup ./sarsar -d mydb -S30 &

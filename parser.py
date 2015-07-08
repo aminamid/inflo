@@ -75,7 +75,7 @@ def pool_run(target, argss):
     procs=[]
     ques=[]
     for args in argss:
-        ques.append(multiprocessing.Queue()) 
+        ques.append(multiprocessing.JoinableQueue()) 
         procs.append(multiprocessing.Process(target=target,args=common.concat([[ques[-1]],args])))
     for p in procs:
         p.daemon=True
@@ -88,6 +88,7 @@ def pool_run(target, argss):
                 while True:
                     logger.error("######### Checking QUEUE while loop")
                     logstd.info("gotque={0}".format(que.get(block=False)))
+                    que.task_done()
             except Queue.Empty as e:
                 pass
         logger.error("######### sleep BEGIN")

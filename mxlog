@@ -34,11 +34,11 @@ def dt(s):
     #dt= datetime.datetime.strptime(s[:15], MXTIMEFMT)+datetime.timedelta(microseconds=int(s[15:18]))
     return (datetime.datetime.strptime(s[:15], MXTIMEFMT)+datetime.timedelta(microseconds=int(s[15:18]))).strftime("%Y-%m-%dT%H:%M:%S.%f")
 
-def ts(s):
+def _ts(s):
     return time.mktime(tuple([tm for tm in time.strptime(s[:15],"%Y%m%d %H%M%S")]))
 
-def ts10(s):
-    return time.mktime(tuple([tm for tm in time.strptime("{0}9".format(s[:14]),"%Y%m%d %H%M%S")]))
+def _ts10(s):
+    return time.mktime(tuple([tm for tm in time.strptime("{0}0".format(s[:14]),"%Y%m%d %H%M%S")]))
 
 def mxlog(func):
     @functools.wraps(func)
@@ -46,7 +46,7 @@ def mxlog(func):
         d = func(*args, **kwargs)
         if not d: 
             return None 
-        return dict([x if not x[0] in  ["rawtime", "parms"] else (x[0], parse_mxlogparms(x[1])) if x[0] == "parms" else ("time", ts(x[1])) for x in d.items()])
+        return dict([x if not x[0] in  ["rawtime", "parms"] else (x[0], parse_mxlogparms(x[1])) if x[0] == "parms" else ("time", _ts10(x[1])) for x in d.items()])
     return wrapper
 
 @mxlog
@@ -74,6 +74,7 @@ def logsum(que, opts, interval_sec=10):
     while True:
         try:
             entry=que.get(block=True,timeout=1)
+            que.task_done()
             ets=entry["time"]
             key=(entry["event"] if not entry["event"].startswith("MsgTrace") else "M_{0}".format(entry["parms"]["0"]), entry["level"], entry["module"], entry["host"])
             if not str(ets) in buckets:
@@ -95,7 +96,7 @@ def logsum(que, opts, interval_sec=10):
 
 def main(opts):
     import multiprocessing
-    que=multiprocessing.Queue()
+    que=multiprocessing.JoinableQueue(maxsize=2000)
     p=multiprocessing.Process(target=logsum,args=(que,opts,))
     p.daemon=True
     p.start()
@@ -107,7 +108,7 @@ def main(opts):
         if not d:
             logger.warning("CouldNotParse:{0}".format(l.replace("\n","\\n")))
             continue
-        que.put(d)
+        que.put(d,True)
 
 def parsed_opts():
     import optparse
